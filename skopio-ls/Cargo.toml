@@ -1,0 +1,6 @@
+[package]
+name = "skopio-ls"
+version.workspace = true
+edition = "2024"
+
+[dependencies]

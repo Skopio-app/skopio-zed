@@ -6,5 +6,8 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib"]
 
+[workspace]
+members = ["skopio-ls"]
+
 [dependencies]
 zed_extension_api = "0.7.0"
