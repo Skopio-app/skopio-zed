@@ -1,6 +1,6 @@
 [package]
 name = "skopio-zed"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 [lib]
@@ -8,6 +8,9 @@ crate-type = ["cdylib"]
 
 [workspace]
 members = ["skopio-ls"]
+
+[workspace.package]
+version = "0.1.0"
 
 [dependencies]
 zed_extension_api = "0.7.0"
