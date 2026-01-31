@@ -1,0 +1,10 @@
+[package]
+name = "skopio-ls"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "process", "sync", "time"] }
+tower-lsp = "0.20.0"
+url = "2.5.8"
