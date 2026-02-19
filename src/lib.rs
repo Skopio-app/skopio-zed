@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
@@ -37,6 +36,7 @@ struct Assets {
 struct Asset {
     url: String,
     sha256: String,
+    #[allow(dead_code)]
     size: Option<u64>,
 }
 
@@ -86,7 +86,9 @@ fn sha256_hex(path: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     loop {
-        let n = file.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
         if n == 0 {
             break;
         }
@@ -109,10 +111,11 @@ fn cleanup_old_dirs(prefix: &str, keep: &str) {
     if let Ok(entries) = fs::read_dir(".") {
         for entry in entries.flatten() {
             let p = entry.path();
-            if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                if name.starts_with(prefix) && name != keep {
-                    let _ = fs::remove_dir_all(p);
-                }
+            if let Some(name) = p.file_name().and_then(|s| s.to_str())
+                && name.starts_with(prefix)
+                && name != keep
+            {
+                let _ = fs::remove_dir_all(p);
             }
         }
     }
@@ -247,7 +250,7 @@ fn sanitize_path(path: &str) -> String {
 }
 
 /// Zed extension runs in a wasm-ish environment; absolute-ness checks differ per OS.
-fn is_absolute_path_wasm(path: &PathBuf) -> bool {
+fn is_absolute_path_wasm(path: &Path) -> bool {
     let Some(path_str) = path.to_str() else {
         return false;
     };
@@ -295,22 +298,21 @@ impl Skopio {
         );
 
         // settings override: lsp.skopio.binary.path
-        if let Some(ls) = read_lsp_settings(worktree) {
-            if let Some(bin) = ls.binary {
-                if let Some(path) = bin.path {
-                    let p = PathBuf::from(path);
-                    if fs::metadata(&p).is_ok_and(|m| m.is_file()) {
-                        self.cached_lsp_binary_path = Some(p.clone());
-                        return Ok(p);
-                    }
-                }
+        if let Some(ls) = read_lsp_settings(worktree)
+            && let Some(bin) = ls.binary
+            && let Some(path) = bin.path
+        {
+            let p = PathBuf::from(path);
+            if fs::metadata(&p).is_ok_and(|m| m.is_file()) {
+                self.cached_lsp_binary_path = Some(p.clone());
+                return Ok(p);
             }
         }
 
-        if let Some(p) = &self.cached_lsp_binary_path {
-            if fs::metadata(p).is_ok_and(|m| m.is_file()) {
-                return Ok(p.clone());
-            }
+        if let Some(p) = &self.cached_lsp_binary_path
+            && fs::metadata(p).is_ok_and(|m| m.is_file())
+        {
+            return Ok(p.clone());
         }
 
         // Convenience: if user has skopio-ls on PATH
@@ -342,15 +344,14 @@ impl Skopio {
         );
 
         // settings override: lsp.skopio.settings.cli_path
-        if let Some(ls) = read_lsp_settings(worktree) {
-            if let Some(settings) = ls.settings {
-                if let Some(cli_path) = json_str(&settings, "cli_path") {
-                    let p = PathBuf::from(cli_path);
-                    if fs::metadata(&p).is_ok_and(|m| m.is_file()) {
-                        self.cached_cli_binary_path = Some(p.clone());
-                        return Ok(p);
-                    }
-                }
+        if let Some(ls) = read_lsp_settings(worktree)
+            && let Some(settings) = ls.settings
+            && let Some(cli_path) = json_str(&settings, "cli_path")
+        {
+            let p = PathBuf::from(cli_path);
+            if fs::metadata(&p).is_ok_and(|m| m.is_file()) {
+                self.cached_cli_binary_path = Some(p.clone());
+                return Ok(p);
             }
         }
 
@@ -361,10 +362,10 @@ impl Skopio {
             return Ok(p);
         }
 
-        if let Some(p) = &self.cached_cli_binary_path {
-            if fs::metadata(p).is_ok_and(|m| m.is_file()) {
-                return Ok(p.clone());
-            }
+        if let Some(p) = &self.cached_cli_binary_path
+            && fs::metadata(p).is_ok_and(|m| m.is_file())
+        {
+            return Ok(p.clone());
         }
 
         zed::set_language_server_installation_status(
@@ -383,17 +384,17 @@ impl Skopio {
         let mut min_sess = "2".to_string();
 
         // Allow overriding via lsp.skopio.settings.*
-        if let Some(ls) = read_lsp_settings(worktree) {
-            if let Some(settings) = ls.settings {
-                if let Some(v) = json_u64(&settings, "idle_secs") {
-                    idle = v.to_string();
-                }
-                if let Some(v) = json_u64(&settings, "switch_grace_secs") {
-                    grace = v.to_string();
-                }
-                if let Some(v) = json_i64(&settings, "min_session_secs") {
-                    min_sess = v.to_string();
-                }
+        if let Some(ls) = read_lsp_settings(worktree)
+            && let Some(settings) = ls.settings
+        {
+            if let Some(v) = json_u64(&settings, "idle_secs") {
+                idle = v.to_string();
+            }
+            if let Some(v) = json_u64(&settings, "switch_grace_secs") {
+                grace = v.to_string();
+            }
+            if let Some(v) = json_i64(&settings, "min_session_secs") {
+                min_sess = v.to_string();
             }
         }
 
