@@ -1,5 +1,6 @@
 use std::{
-    env, fs,
+    env,
+    fs,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
@@ -13,6 +14,7 @@ const EXT_REPO: &str = "Skopio-app/skopio-zed";
 const CLI_LATEST_JSON_URL: &str =
     "https://github.com/Skopio-app/cli-releases/releases/latest/download/latest.json";
 
+// Runtime tuning env keys (optional; we also pass these as args now)
 const ENV_IDLE_SECS: &str = "SKOPIO_ZED_IDLE_SECS";
 const ENV_SWITCH_GRACE_SECS: &str = "SKOPIO_ZED_SWITCH_GRACE_SECS";
 const ENV_MIN_SESSION_SECS: &str = "SKOPIO_ZED_MIN_SESSION_SECS";
@@ -48,7 +50,6 @@ fn current_mac_arch() -> Option<MacArch> {
     use zed::{Architecture as Arch, Os};
 
     let (os, arch) = zed::current_platform();
-
     match (os, arch) {
         (Os::Mac, Arch::Aarch64) => Some(MacArch::Aarch64),
         (Os::Mac, Arch::X8664) => Some(MacArch::X8664),
@@ -84,11 +85,8 @@ fn sha256_hex(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path).map_err(|e| format!("open failed: {e}"))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
-
     loop {
-        let n = file
-            .read(&mut buf)
-            .map_err(|e| format!("read failed: {e}"))?;
+        let n = file.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
         if n == 0 {
             break;
         }
@@ -120,6 +118,7 @@ fn cleanup_old_dirs(prefix: &str, keep: &str) {
     }
 }
 
+/// Zed provides access to per-language-server settings via zed::settings::LspSettings.
 fn read_lsp_settings(worktree: &zed::Worktree) -> Option<zed::settings::LspSettings> {
     zed::settings::LspSettings::for_worktree("skopio", worktree).ok()
 }
@@ -151,7 +150,6 @@ fn fetch_latest_json() -> Result<LatestJson, String> {
 
 fn ensure_cli_installed(arch: MacArch) -> Result<PathBuf, String> {
     let latest = fetch_latest_json()?;
-
     let asset = match arch {
         MacArch::Aarch64 => latest
             .assets
@@ -176,7 +174,7 @@ fn ensure_cli_installed(arch: MacArch) -> Result<PathBuf, String> {
     let zip_file = format!("{version_dir}.zip");
     if !Path::new(&zip_file).exists() {
         zed::download_file(&asset.url, &zip_file, zed::DownloadedFileType::Uncompressed)
-            .map_err(|e| format!("dowload cli zip (file) failed: {e}"))?;
+            .map_err(|e| format!("download cli zip (file) failed: {e}"))?;
     }
 
     let got = sha256_hex(Path::new(&zip_file))?;
@@ -239,7 +237,7 @@ fn ensure_lsp_installed(arch: MacArch) -> Result<PathBuf, String> {
     Ok(lsp_rel_path)
 }
 
-/// Turn a path into a string safe to pass back to Zed
+/// Turn a path into a string safe to pass back to Zed.
 /// On Windows, Zed sometimes gives paths prefixed with `/` - strip that.
 fn sanitize_path(path: &str) -> String {
     match zed::current_platform() {
@@ -268,6 +266,15 @@ fn is_absolute_path_wasm(path: &PathBuf) -> bool {
         }
         _ => path_str.starts_with('/'),
     }
+}
+
+/// Convert possibly-relative path into an absolute string for passing to subprocesses.
+fn to_abs_string_for_exec(p: &PathBuf) -> Result<String, String> {
+    if is_absolute_path_wasm(p) {
+        return Ok(p.to_string_lossy().to_string());
+    }
+    let cwd = env::current_dir().map_err(|e| e.to_string())?;
+    Ok(cwd.join(p).to_string_lossy().to_string())
 }
 
 struct Skopio {
@@ -306,6 +313,7 @@ impl Skopio {
             }
         }
 
+        // Convenience: if user has skopio-ls on PATH
         if let Some(p) = worktree.which("skopio-ls") {
             let p = PathBuf::from(p);
             self.cached_lsp_binary_path = Some(p.clone());
@@ -346,6 +354,7 @@ impl Skopio {
             }
         }
 
+        // Convenience: if user has skopio-cli on PATH
         if let Some(p) = worktree.which("skopio-cli") {
             let p = PathBuf::from(p);
             self.cached_cli_binary_path = Some(p.clone());
@@ -412,30 +421,30 @@ impl zed::Extension for Skopio {
 
         let (idle, grace, min_sess) = Self::resolve_runtime_tuning(worktree);
 
+        let cli_abs = sanitize_path(&to_abs_string_for_exec(&cli_path)?);
+        let lsp_abs = sanitize_path(&to_abs_string_for_exec(&lsp_path)?);
+
+        let args = vec![
+            "--skopio-cli".to_string(),
+            cli_abs.clone(),
+            "--idle-secs".to_string(),
+            idle.clone(),
+            "--switch-grace-secs".to_string(),
+            grace.clone(),
+            "--min-session-secs".to_string(),
+            min_sess.clone(),
+        ];
+
+        // Still provide env for backwards compatibility
         let mut env_vars = worktree.shell_env();
-
-        let cli_abs = if is_absolute_path_wasm(&cli_path) {
-            cli_path.to_string_lossy().to_string()
-        } else {
-            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-            cwd.join(cli_path).to_string_lossy().to_string()
-        };
-
-        env_vars.push(("SKOPIO_CLI_PATH".into(), sanitize_path(&cli_abs)));
+        env_vars.push(("SKOPIO_CLI_PATH".into(), cli_abs));
         env_vars.push((ENV_IDLE_SECS.into(), idle));
         env_vars.push((ENV_SWITCH_GRACE_SECS.into(), grace));
         env_vars.push((ENV_MIN_SESSION_SECS.into(), min_sess));
-        
-        let lsp_cmd = if is_absolute_path_wasm(&lsp_path) {
-            lsp_path.to_string_lossy().to_string()
-        } else {
-            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-            cwd.join(lsp_path).to_string_lossy().to_string()
-        };
-        
+
         Ok(zed::Command {
-            command: sanitize_path(&lsp_cmd),
-            args: vec![],
+            command: lsp_abs,
+            args,
             env: env_vars,
         })
     }

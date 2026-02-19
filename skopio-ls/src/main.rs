@@ -1,4 +1,5 @@
 use anyhow::Context;
+use clap::{Arg, Command as ClapCommand};
 use std::{
     collections::HashMap,
     sync::Arc,
@@ -7,22 +8,20 @@ use std::{
 use tokio::{
     process::Command,
     sync::Mutex,
-    time::{Instant, interval},
+    time::{interval, Instant},
 };
 use tower_lsp::{
-    Client, LanguageServer, LspService, Server, jsonrpc::Result as LspResult, lsp_types::*,
+    jsonrpc::Result as LspResult,
+    lsp_types::*,
+    Client, LanguageServer, LspService, Server,
 };
 use url::Url;
 
 #[derive(Debug, Clone)]
 struct CliConfig {
     skopio_cli: String,
-    // Flush current active session after no activity for this duration
     idle_timeout: Duration,
-    // Keep sessions alive for this long after switching away;
-    // if no activity, flush them.
     switch_grace: Duration,
-    // Don't emit events shorter than this
     min_session_secs: i64,
     category: String,
     app: String,
@@ -31,6 +30,7 @@ struct CliConfig {
 }
 
 impl CliConfig {
+    /// Defaults from env (your current behavior)
     fn from_env() -> Self {
         let skopio_cli = std::env::var("SKOPIO_CLI_PATH").unwrap_or_else(|_| "skopio-cli".into());
         let idle_secs = std::env::var("SKOPIO_ZED_IDLE_SECS")
@@ -56,6 +56,109 @@ impl CliConfig {
             entity_type: "File".into(),
             source: "skopio-zed".into(),
         }
+    }
+
+    fn from_args() -> anyhow::Result<Self> {
+        let mut cfg = Self::from_env();
+
+        let matches = ClapCommand::new("skopio-ls")
+            .version(env!("CARGO_PKG_VERSION"))
+            .about("Skopio language server for Zed")
+            .arg(
+                Arg::new("skopio-cli")
+                    .long("skopio-cli")
+                    .value_name("PATH")
+                    .help("Path to skopio-cli binary")
+                    .required(true),
+            )
+            .arg(
+                Arg::new("idle-secs")
+                    .long("idle-secs")
+                    .value_name("SECS")
+                    .help("Flush current active session after this many seconds of no activity")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("switch-grace-secs")
+                    .long("switch-grace-secs")
+                    .value_name("SECS")
+                    .help("Flush non-current sessions after this many seconds since last activity")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("min-session-secs")
+                    .long("min-session-secs")
+                    .value_name("SECS")
+                    .help("Do not emit sessions shorter than this duration")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("category")
+                    .long("category")
+                    .value_name("NAME")
+                    .help("Category to send to skopio-cli")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("app")
+                    .long("app")
+                    .value_name("NAME")
+                    .help("App name to send to skopio-cli")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("entity-type")
+                    .long("entity-type")
+                    .value_name("NAME")
+                    .help("Entity type to send to skopio-cli")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("source")
+                    .long("source")
+                    .value_name("NAME")
+                    .help("Source identifier to send to skopio-cli")
+                    .required(false),
+            )
+            .get_matches();
+
+        cfg.skopio_cli = matches
+            .get_one::<String>("skopio-cli")
+            .expect("required")
+            .to_string();
+
+        if let Some(v) = matches.get_one::<String>("idle-secs") {
+            if let Ok(secs) = v.parse::<u64>() {
+                cfg.idle_timeout = Duration::from_secs(secs);
+            }
+        }
+
+        if let Some(v) = matches.get_one::<String>("switch-grace-secs") {
+            if let Ok(secs) = v.parse::<u64>() {
+                cfg.switch_grace = Duration::from_secs(secs);
+            }
+        }
+
+        if let Some(v) = matches.get_one::<String>("min-session-secs") {
+            if let Ok(secs) = v.parse::<i64>() {
+                cfg.min_session_secs = secs;
+            }
+        }
+
+        if let Some(v) = matches.get_one::<String>("category") {
+            cfg.category = v.to_string();
+        }
+        if let Some(v) = matches.get_one::<String>("app") {
+            cfg.app = v.to_string();
+        }
+        if let Some(v) = matches.get_one::<String>("entity-type") {
+            cfg.entity_type = v.to_string();
+        }
+        if let Some(v) = matches.get_one::<String>("source") {
+            cfg.source = v.to_string();
+        }
+
+        Ok(cfg)
     }
 }
 
@@ -90,6 +193,7 @@ struct State {
     workspace_root: Option<String>,
     sessions: HashMap<String, Session>,
     current_key: Option<String>,
+    tick_count: u64,
 }
 
 impl State {
@@ -100,16 +204,17 @@ impl State {
     }
 }
 
-async fn emit_cli_event(cfg: &CliConfig, sess: &Session) -> anyhow::Result<()> {
+/// Runs skopio-cli and returns stdout/stderr for debugging.
+async fn emit_cli_event(cfg: &CliConfig, sess: &Session) -> anyhow::Result<(i64, String, String)> {
     let end_ts = sess.last_ts;
     let duration = end_ts - sess.start_ts;
 
     if duration < cfg.min_session_secs {
-        return Ok(());
+        return Ok((duration, String::new(), String::new()));
     }
 
-    let status = Command::new(&cfg.skopio_cli)
-        .arg("event")
+    let mut cmd = Command::new(&cfg.skopio_cli);
+    cmd.arg("event")
         .arg("--timestamp")
         .arg(sess.start_ts.to_string())
         .arg("--category")
@@ -127,16 +232,25 @@ async fn emit_cli_event(cfg: &CliConfig, sess: &Session) -> anyhow::Result<()> {
         .arg("--source")
         .arg(&cfg.source)
         .arg("--end-timestamp")
-        .arg(end_ts.to_string())
-        .status()
+        .arg(end_ts.to_string());
+
+    let output = cmd
+        .output()
         .await
         .with_context(|| format!("Failed to run `{}`", cfg.skopio_cli))?;
 
-    if !status.success() {
-        anyhow::bail!("Skopio CLI exited with status {status}");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Skopio CLI exited non-zero: status={:?}, stderr={}",
+            output.status.code(),
+            stderr.trim()
+        );
     }
 
-    Ok(())
+    Ok((duration, stdout, stderr))
 }
 
 struct Backend {
@@ -146,23 +260,29 @@ struct Backend {
 }
 
 impl Backend {
-    async fn note_activity(&self, uri: Url) {
+    async fn log(&self, ty: MessageType, msg: impl Into<String>) {
+        let _ = self.client.log_message(ty, msg.into()).await;
+    }
+
+    async fn note_activity(&self, uri: Url, source: &'static str) {
         let now_ts = now_unix_secs();
         let now_instant = Instant::now();
-
         let key = uri.to_string();
 
-        let (entity, project) = {
+        let (entity, project, root, before_sessions, prev_current) = {
             let st = self.state.lock().await;
             (
                 uri_to_path_string(&uri).unwrap_or_else(|| key.clone()),
                 st.project_string(),
+                st.workspace_root.clone().unwrap_or_else(|| "unknown".into()),
+                st.sessions.len(),
+                st.current_key.clone(),
             )
         };
 
         let mut st = self.state.lock().await;
 
-        // Update or insert session
+        let existed = st.sessions.contains_key(&key);
         match st.sessions.get_mut(&key) {
             Some(s) => {
                 s.last_ts = now_ts;
@@ -183,8 +303,19 @@ impl Backend {
             }
         }
 
-        // Mark current file as active
-        st.current_key = Some(key)
+        st.current_key = Some(key.clone());
+        let after_sessions = st.sessions.len();
+
+        drop(st);
+
+        self.log(
+            MessageType::LOG,
+            format!(
+                "[{source}] activity: key={key} existed={existed} root={root} sessions {before_sessions}->{after_sessions} prev_current={:?}",
+                prev_current.as_deref()
+            ),
+        )
+        .await;
     }
 
     async fn flush_closed(&self, uri: &Url) {
@@ -200,36 +331,99 @@ impl Backend {
         };
 
         if let Some(sess) = maybe {
-            if let Err(err) = emit_cli_event(&self.cfg, &sess).await {
-                let _ = self
-                    .client
-                    .log_message(
+            self.log(
+                MessageType::INFO,
+                format!(
+                    "[did_close] flushing session: entity={} start={} last={} (key={})",
+                    sess.entity, sess.start_ts, sess.last_ts, key
+                ),
+            )
+            .await;
+
+            match emit_cli_event(&self.cfg, &sess).await {
+                Ok((duration, stdout, stderr)) => {
+                    if duration < self.cfg.min_session_secs {
+                        self.log(
+                            MessageType::LOG,
+                            format!(
+                                "[did_close] skipped (too short): duration={}s < min_session_secs={}",
+                                duration, self.cfg.min_session_secs
+                            ),
+                        )
+                        .await;
+                    } else {
+                        if !stdout.trim().is_empty() {
+                            self.log(MessageType::LOG, format!("[did_close] cli stdout: {}", stdout.trim()))
+                                .await;
+                        }
+                        if !stderr.trim().is_empty() {
+                            self.log(MessageType::LOG, format!("[did_close] cli stderr: {}", stderr.trim()))
+                                .await;
+                        }
+
+                        self.log(
+                            MessageType::INFO,
+                            format!(
+                                "[did_close] CLI event OK: duration={}s entity={}",
+                                duration, sess.entity
+                            ),
+                        )
+                        .await;
+                    }
+                }
+                Err(err) => {
+                    self.log(
                         MessageType::ERROR,
-                        format!("Skopio CLI event failed: {err:#}"),
+                        format!("[did_close] CLI event FAILED: {err:#} (entity={})", sess.entity),
                     )
                     .await;
+                }
             }
+        } else {
+            self.log(MessageType::LOG, format!("[did_close] no session found for key={key}"))
+                .await;
         }
     }
 
-    async fn periodic_flush_tick(cfg: CliConfig, state: Arc<Mutex<State>>) {
+    async fn periodic_flush_tick(client: Client, cfg: CliConfig, state: Arc<Mutex<State>>) {
         let mut tick = interval(Duration::from_secs(5));
         loop {
             tick.tick().await;
 
             let now = Instant::now();
-            let mut to_flush: Vec<Session> = Vec::new();
+            let (tick_no, cur_key, total_sessions) = {
+                let mut st = state.lock().await;
+                st.tick_count += 1;
+                (st.tick_count, st.current_key.clone(), st.sessions.len())
+            };
+            
+            if tick_no % 6 == 0 {
+                let _ = client
+                    .log_message(
+                        MessageType::LOG,
+                        format!(
+                            "[tick] running (every 5s). tick={} sessions={} current={:?} idle={}s grace={}s",
+                            tick_no,
+                            total_sessions,
+                            cur_key.as_deref(),
+                            cfg.idle_timeout.as_secs(),
+                            cfg.switch_grace.as_secs(),
+                        ),
+                    )
+                    .await;
+            }
+
+            let mut to_flush: Vec<(Session, &'static str)> = Vec::new();
 
             {
                 let mut st = state.lock().await;
                 let current_key = st.current_key.clone();
 
-                // Idle flush current session
                 if let Some(cur_key) = &current_key {
                     if let Some(cur_sess) = st.sessions.get(cur_key) {
                         if now.duration_since(cur_sess.last_seen) >= cfg.idle_timeout {
                             if let Some(s) = st.sessions.remove(cur_key) {
-                                to_flush.push(s);
+                                to_flush.push((s, "idle_timeout"));
                             }
                             st.current_key = None;
                         }
@@ -237,10 +431,10 @@ impl Backend {
                         st.current_key = None;
                     }
                 }
-                let current_key = st.current_key.clone();
 
-                // Grace flush all non-current sessions
+                let current_key = st.current_key.clone();
                 let grace = cfg.switch_grace;
+
                 let keys_to_remove: Vec<String> = st
                     .sessions
                     .iter()
@@ -259,13 +453,58 @@ impl Backend {
 
                 for k in keys_to_remove {
                     if let Some(s) = st.sessions.remove(&k) {
-                        to_flush.push(s);
+                        to_flush.push((s, "switch_grace"));
                     }
                 }
             }
 
-            for sess in to_flush {
-                let _ = emit_cli_event(&cfg, &sess).await;
+            for (sess, reason) in to_flush {
+                let _ = client
+                    .log_message(
+                        MessageType::INFO,
+                        format!(
+                            "[tick] flushing ({reason}): entity={} start={} last={}",
+                            sess.entity, sess.start_ts, sess.last_ts
+                        ),
+                    )
+                    .await;
+
+                match emit_cli_event(&cfg, &sess).await {
+                    Ok((duration, _stdout, _stderr)) => {
+                        if duration < cfg.min_session_secs {
+                            let _ = client
+                                .log_message(
+                                    MessageType::LOG,
+                                    format!(
+                                        "[tick] skipped (too short): duration={}s < min_session_secs={}",
+                                        duration, cfg.min_session_secs
+                                    ),
+                                )
+                                .await;
+                        } else {
+                            let _ = client
+                                .log_message(
+                                    MessageType::INFO,
+                                    format!(
+                                        "[tick] CLI event OK: duration={}s entity={}",
+                                        duration, sess.entity
+                                    ),
+                                )
+                                .await;
+                        }
+                    }
+                    Err(err) => {
+                        let _ = client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!(
+                                    "[tick] CLI event FAILED: {err:#} (entity={})",
+                                    sess.entity
+                                ),
+                            )
+                            .await;
+                    }
+                }
             }
         }
     }
@@ -279,14 +518,33 @@ impl LanguageServer for Backend {
             .map(|u| uri_to_path_string(&u).unwrap_or_else(|| u.to_string()))
             .or_else(|| {
                 params.workspace_folders.as_ref().and_then(|wf| {
-                    wf.first()
-                        .map(|f| uri_to_path_string(&f.uri).unwrap_or_else(|| f.uri.to_string()))
+                    wf.first().map(|f| {
+                        uri_to_path_string(&f.uri).unwrap_or_else(|| f.uri.to_string())
+                    })
                 })
             });
+
         {
             let mut st = self.state.lock().await;
-            st.workspace_root = root;
+            st.workspace_root = root.clone();
         }
+
+        self.log(
+            MessageType::INFO,
+            format!(
+                "[initialize] root={:?} cfg={{cli: {}, idle:{}s, grace:{}s, min_session:{}s, category:{}, app:{}, entity_type:{}, source:{}}}",
+                root.as_deref(),
+                self.cfg.skopio_cli,
+                self.cfg.idle_timeout.as_secs(),
+                self.cfg.switch_grace.as_secs(),
+                self.cfg.min_session_secs,
+                self.cfg.category,
+                self.cfg.app,
+                self.cfg.entity_type,
+                self.cfg.source
+            ),
+        )
+        .await;
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -303,58 +561,134 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        let _ = self
-            .client
-            .log_message(MessageType::INFO, "Skopio LSP initialized")
-            .await;
+        self.log(MessageType::INFO, "Skopio LSP initialized").await;
+        self.log(
+            MessageType::LOG,
+            "Now open/edit/save/close a file to verify did_* handlers and CLI emission.",
+        )
+        .await;
     }
 
     async fn shutdown(&self) -> LspResult<()> {
+        self.log(MessageType::INFO, "[shutdown] flushing all remaining sessions...")
+            .await;
+
         let mut sessions: Vec<Session> = Vec::new();
         {
             let mut st = self.state.lock().await;
             sessions.extend(st.sessions.drain().map(|(_, v)| v));
             st.current_key = None;
         }
+
         for sess in sessions {
-            let _ = emit_cli_event(&self.cfg, &sess).await;
+            self.log(
+                MessageType::INFO,
+                format!(
+                    "[shutdown] flushing: entity={} start={} last={}",
+                    sess.entity, sess.start_ts, sess.last_ts
+                ),
+            )
+            .await;
+
+            match emit_cli_event(&self.cfg, &sess).await {
+                Ok((duration, _stdout, _stderr)) => {
+                    if duration < self.cfg.min_session_secs {
+                        self.log(
+                            MessageType::LOG,
+                            format!(
+                                "[shutdown] skipped (too short): duration={}s < min_session_secs={}",
+                                duration, self.cfg.min_session_secs
+                            ),
+                        )
+                        .await;
+                    } else {
+                        self.log(
+                            MessageType::INFO,
+                            format!(
+                                "[shutdown] CLI event OK: duration={}s entity={}",
+                                duration, sess.entity
+                            ),
+                        )
+                        .await;
+                    }
+                }
+                Err(err) => {
+                    self.log(
+                        MessageType::ERROR,
+                        format!("[shutdown] CLI event FAILED: {err:#} (entity={})", sess.entity),
+                    )
+                    .await;
+                }
+            }
         }
+
         Ok(())
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.note_activity(params.text_document.uri).await
+        self.log(
+            MessageType::LOG,
+            format!("[did_open] uri={}", params.text_document.uri),
+        )
+        .await;
+        self.note_activity(params.text_document.uri, "did_open").await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        self.note_activity(params.text_document.uri).await;
+        self.log(
+            MessageType::LOG,
+            format!(
+                "[did_change] uri={} changes={}",
+                params.text_document.uri,
+                params.content_changes.len()
+            ),
+        )
+        .await;
+        self.note_activity(params.text_document.uri, "did_change").await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        self.note_activity(params.text_document.uri).await;
+        self.log(
+            MessageType::LOG,
+            format!("[did_save] uri={}", params.text_document.uri),
+        )
+        .await;
+        self.note_activity(params.text_document.uri, "did_save").await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        self.flush_closed(&params.text_document.uri).await
+        self.log(
+            MessageType::LOG,
+            format!("[did_close] uri={}", params.text_document.uri),
+        )
+        .await;
+        self.flush_closed(&params.text_document.uri).await;
     }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cfg = CliConfig::from_env();
+    let cfg = CliConfig::from_args()?;
 
     let state = Arc::new(Mutex::new(State {
         workspace_root: None,
         sessions: HashMap::new(),
         current_key: None,
+        tick_count: 0,
     }));
 
-    tokio::spawn(Backend::periodic_flush_tick(cfg.clone(), state.clone()));
+    let (service, socket) = LspService::new(|client| {
+        tokio::spawn(Backend::periodic_flush_tick(
+            client.clone(),
+            cfg.clone(),
+            state.clone(),
+        ));
 
-    let (service, socket) = LspService::new(|client| Backend {
-        client,
-        cfg: cfg.clone(),
-        state: state.clone(),
+        Backend {
+            client,
+            cfg: cfg.clone(),
+            state: state.clone(),
+        }
     });
 
     Server::new(tokio::io::stdin(), tokio::io::stdout(), socket)
