@@ -8,12 +8,10 @@ use std::{
 use tokio::{
     process::Command,
     sync::Mutex,
-    time::{interval, Instant},
+    time::{Instant, interval},
 };
 use tower_lsp::{
-    jsonrpc::Result as LspResult,
-    lsp_types::*,
-    Client, LanguageServer, LspService, Server,
+    Client, LanguageServer, LspService, Server, jsonrpc::Result as LspResult, lsp_types::*,
 };
 use url::Url;
 
@@ -27,10 +25,11 @@ struct CliConfig {
     app: String,
     entity_type: String,
     source: String,
+    sync_interval: Duration,
 }
 
 impl CliConfig {
-    /// Defaults from env (your current behavior)
+    /// Defaults from env
     fn from_env() -> Self {
         let skopio_cli = std::env::var("SKOPIO_CLI_PATH").unwrap_or_else(|_| "skopio-cli".into());
         let idle_secs = std::env::var("SKOPIO_ZED_IDLE_SECS")
@@ -45,6 +44,10 @@ impl CliConfig {
             .ok()
             .and_then(|v| v.parse::<i64>().ok())
             .unwrap_or(2);
+        let sync_secs = std::env::var("SKOPIO_ZED_SYNC_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(180);
 
         Self {
             skopio_cli,
@@ -55,6 +58,7 @@ impl CliConfig {
             app: "Zed".into(),
             entity_type: "File".into(),
             source: "skopio-zed".into(),
+            sync_interval: Duration::from_secs(sync_secs),
         }
     }
 
@@ -194,6 +198,8 @@ struct State {
     sessions: HashMap<String, Session>,
     current_key: Option<String>,
     tick_count: u64,
+    last_sync: Instant,
+    sync_running: bool,
 }
 
 impl State {
@@ -202,6 +208,29 @@ impl State {
             .clone()
             .unwrap_or_else(|| "unknown".into())
     }
+}
+
+async fn run_cli_sync(cfg: &CliConfig) -> anyhow::Result<(String, String)> {
+    let mut cwd = Command::new(&cfg.skopio_cli);
+    cwd.arg("sync");
+
+    let output = cwd
+        .output()
+        .await
+        .with_context(|| format!("Failed to run `{}` sync", cfg.skopio_cli))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Skopio CLI exited non-zero: status={:?}, stderr={}",
+            output.status.code(),
+            stderr.trim()
+        );
+    }
+
+    Ok((stdout, stderr))
 }
 
 /// Runs skopio-cli and returns stdout/stderr for debugging.
@@ -264,6 +293,56 @@ impl Backend {
         let _ = self.client.log_message(ty, msg.into()).await;
     }
 
+    async fn sync(&self, reason: &'static str) {
+        let should_start = {
+            let mut st = self.state.lock().await;
+
+            if st.sync_running {
+                return;
+            }
+
+            let since = st.last_sync.elapsed();
+            if since < self.cfg.sync_interval {
+                return;
+            }
+
+            st.sync_running = true;
+            st.last_sync = Instant::now();
+            true
+        };
+
+        if !should_start {
+            return;
+        }
+
+        self.log(
+            MessageType::LOG,
+            format!("[sync] starting (reason={reason})"),
+        )
+        .await;
+
+        match run_cli_sync(&self.cfg).await {
+            Ok((out, err)) => {
+                if !out.trim().is_empty() {
+                    self.log(MessageType::LOG, format!("[sync] stdout: {}", out.trim()))
+                        .await;
+                }
+                if !err.trim().is_empty() {
+                    self.log(MessageType::LOG, format!("[sync] stderr: {}", err.trim()))
+                        .await;
+                }
+                self.log(MessageType::INFO, "[sync] ok").await;
+            }
+            Err(e) => {
+                self.log(MessageType::ERROR, format!("[sync] FAILED: {e:#}"))
+                    .await;
+            }
+        }
+
+        let mut st = self.state.lock().await;
+        st.sync_running = false;
+    }
+
     async fn note_activity(&self, uri: Url, source: &'static str) {
         let now_ts = now_unix_secs();
         let now_instant = Instant::now();
@@ -274,7 +353,9 @@ impl Backend {
             (
                 uri_to_path_string(&uri).unwrap_or_else(|| key.clone()),
                 st.project_string(),
-                st.workspace_root.clone().unwrap_or_else(|| "unknown".into()),
+                st.workspace_root
+                    .clone()
+                    .unwrap_or_else(|| "unknown".into()),
                 st.sessions.len(),
                 st.current_key.clone(),
             )
@@ -353,12 +434,18 @@ impl Backend {
                         .await;
                     } else {
                         if !stdout.trim().is_empty() {
-                            self.log(MessageType::LOG, format!("[did_close] cli stdout: {}", stdout.trim()))
-                                .await;
+                            self.log(
+                                MessageType::LOG,
+                                format!("[did_close] cli stdout: {}", stdout.trim()),
+                            )
+                            .await;
                         }
                         if !stderr.trim().is_empty() {
-                            self.log(MessageType::LOG, format!("[did_close] cli stderr: {}", stderr.trim()))
-                                .await;
+                            self.log(
+                                MessageType::LOG,
+                                format!("[did_close] cli stderr: {}", stderr.trim()),
+                            )
+                            .await;
                         }
 
                         self.log(
@@ -369,19 +456,27 @@ impl Backend {
                             ),
                         )
                         .await;
+
+                        self.sync("did_close").await;
                     }
                 }
                 Err(err) => {
                     self.log(
                         MessageType::ERROR,
-                        format!("[did_close] CLI event FAILED: {err:#} (entity={})", sess.entity),
+                        format!(
+                            "[did_close] CLI event FAILED: {err:#} (entity={})",
+                            sess.entity
+                        ),
                     )
                     .await;
                 }
             }
         } else {
-            self.log(MessageType::LOG, format!("[did_close] no session found for key={key}"))
-                .await;
+            self.log(
+                MessageType::LOG,
+                format!("[did_close] no session found for key={key}"),
+            )
+            .await;
         }
     }
 
@@ -396,7 +491,7 @@ impl Backend {
                 st.tick_count += 1;
                 (st.tick_count, st.current_key.clone(), st.sessions.len())
             };
-            
+
             if tick_no % 6 == 0 {
                 let _ = client
                     .log_message(
@@ -518,9 +613,8 @@ impl LanguageServer for Backend {
             .map(|u| uri_to_path_string(&u).unwrap_or_else(|| u.to_string()))
             .or_else(|| {
                 params.workspace_folders.as_ref().and_then(|wf| {
-                    wf.first().map(|f| {
-                        uri_to_path_string(&f.uri).unwrap_or_else(|| f.uri.to_string())
-                    })
+                    wf.first()
+                        .map(|f| uri_to_path_string(&f.uri).unwrap_or_else(|| f.uri.to_string()))
                 })
             });
 
@@ -570,8 +664,11 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> LspResult<()> {
-        self.log(MessageType::INFO, "[shutdown] flushing all remaining sessions...")
-            .await;
+        self.log(
+            MessageType::INFO,
+            "[shutdown] flushing all remaining sessions...",
+        )
+        .await;
 
         let mut sessions: Vec<Session> = Vec::new();
         {
@@ -615,7 +712,10 @@ impl LanguageServer for Backend {
                 Err(err) => {
                     self.log(
                         MessageType::ERROR,
-                        format!("[shutdown] CLI event FAILED: {err:#} (entity={})", sess.entity),
+                        format!(
+                            "[shutdown] CLI event FAILED: {err:#} (entity={})",
+                            sess.entity
+                        ),
                     )
                     .await;
                 }
@@ -631,7 +731,8 @@ impl LanguageServer for Backend {
             format!("[did_open] uri={}", params.text_document.uri),
         )
         .await;
-        self.note_activity(params.text_document.uri, "did_open").await;
+        self.note_activity(params.text_document.uri, "did_open")
+            .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -644,7 +745,8 @@ impl LanguageServer for Backend {
             ),
         )
         .await;
-        self.note_activity(params.text_document.uri, "did_change").await;
+        self.note_activity(params.text_document.uri, "did_change")
+            .await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
@@ -653,7 +755,8 @@ impl LanguageServer for Backend {
             format!("[did_save] uri={}", params.text_document.uri),
         )
         .await;
-        self.note_activity(params.text_document.uri, "did_save").await;
+        self.note_activity(params.text_document.uri, "did_save")
+            .await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -663,6 +766,7 @@ impl LanguageServer for Backend {
         )
         .await;
         self.flush_closed(&params.text_document.uri).await;
+        self.sync("shutdown").await
     }
 }
 
@@ -675,6 +779,8 @@ async fn main() -> anyhow::Result<()> {
         sessions: HashMap::new(),
         current_key: None,
         tick_count: 0,
+        last_sync: Instant::now() - cfg.sync_interval,
+        sync_running: false,
     }));
 
     let (service, socket) = LspService::new(|client| {
