@@ -126,7 +126,7 @@ fn json_str(v: &Value, key: &str) -> Option<String> {
 }
 
 fn fetch_latest_json() -> Result<LatestJson, String> {
-    let latest_path = "latest.json";
+    let latest_path = "cli.latest.json";
     zed::download_file(
         CLI_LATEST_JSON_URL,
         latest_path,
