@@ -13,7 +13,6 @@ const EXT_REPO: &str = "Skopio-app/skopio-zed";
 const CLI_LATEST_JSON_URL: &str =
     "https://github.com/Skopio-app/cli-releases/releases/latest/download/latest.json";
 
-// Runtime tuning env keys (optional; we also pass these as args now)
 const ENV_IDLE_SECS: &str = "SKOPIO_ZED_IDLE_SECS";
 const ENV_SWITCH_GRACE_SECS: &str = "SKOPIO_ZED_SWITCH_GRACE_SECS";
 const ENV_MIN_SESSION_SECS: &str = "SKOPIO_ZED_MIN_SESSION_SECS";
@@ -436,7 +435,6 @@ impl zed::Extension for Skopio {
             min_sess.clone(),
         ];
 
-        // Still provide env for backwards compatibility
         let mut env_vars = worktree.shell_env();
         env_vars.push(("SKOPIO_CLI_PATH".into(), cli_abs));
         env_vars.push((ENV_IDLE_SECS.into(), idle));

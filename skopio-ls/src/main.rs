@@ -1,5 +1,5 @@
 use anyhow::Context;
-use clap::{Arg, Command as ClapCommand};
+// use clap::{Arg, Command as ClapCommand};
 use std::{
     collections::HashMap,
     sync::Arc,
@@ -62,108 +62,108 @@ impl CliConfig {
         }
     }
 
-    fn from_args() -> anyhow::Result<Self> {
-        let mut cfg = Self::from_env();
+    // fn from_args() -> anyhow::Result<Self> {
+    //     let mut cfg = Self::from_env();
 
-        let matches = ClapCommand::new("skopio-ls")
-            .version(env!("CARGO_PKG_VERSION"))
-            .about("Skopio language server for Zed")
-            .arg(
-                Arg::new("skopio-cli")
-                    .long("skopio-cli")
-                    .value_name("PATH")
-                    .help("Path to skopio-cli binary")
-                    .required(true),
-            )
-            .arg(
-                Arg::new("idle-secs")
-                    .long("idle-secs")
-                    .value_name("SECS")
-                    .help("Flush current active session after this many seconds of no activity")
-                    .required(false),
-            )
-            .arg(
-                Arg::new("switch-grace-secs")
-                    .long("switch-grace-secs")
-                    .value_name("SECS")
-                    .help("Flush non-current sessions after this many seconds since last activity")
-                    .required(false),
-            )
-            .arg(
-                Arg::new("min-session-secs")
-                    .long("min-session-secs")
-                    .value_name("SECS")
-                    .help("Do not emit sessions shorter than this duration")
-                    .required(false),
-            )
-            .arg(
-                Arg::new("category")
-                    .long("category")
-                    .value_name("NAME")
-                    .help("Category to send to skopio-cli")
-                    .required(false),
-            )
-            .arg(
-                Arg::new("app")
-                    .long("app")
-                    .value_name("NAME")
-                    .help("App name to send to skopio-cli")
-                    .required(false),
-            )
-            .arg(
-                Arg::new("entity-type")
-                    .long("entity-type")
-                    .value_name("NAME")
-                    .help("Entity type to send to skopio-cli")
-                    .required(false),
-            )
-            .arg(
-                Arg::new("source")
-                    .long("source")
-                    .value_name("NAME")
-                    .help("Source identifier to send to skopio-cli")
-                    .required(false),
-            )
-            .get_matches();
+    //     let matches = ClapCommand::new("skopio-ls")
+    //         .version(env!("CARGO_PKG_VERSION"))
+    //         .about("Skopio language server for Zed")
+    //         .arg(
+    //             Arg::new("skopio-cli")
+    //                 .long("skopio-cli")
+    //                 .value_name("PATH")
+    //                 .help("Path to skopio-cli binary")
+    //                 .required(true),
+    //         )
+    //         .arg(
+    //             Arg::new("idle-secs")
+    //                 .long("idle-secs")
+    //                 .value_name("SECS")
+    //                 .help("Flush current active session after this many seconds of no activity")
+    //                 .required(false),
+    //         )
+    //         .arg(
+    //             Arg::new("switch-grace-secs")
+    //                 .long("switch-grace-secs")
+    //                 .value_name("SECS")
+    //                 .help("Flush non-current sessions after this many seconds since last activity")
+    //                 .required(false),
+    //         )
+    //         .arg(
+    //             Arg::new("min-session-secs")
+    //                 .long("min-session-secs")
+    //                 .value_name("SECS")
+    //                 .help("Do not emit sessions shorter than this duration")
+    //                 .required(false),
+    //         )
+    //         .arg(
+    //             Arg::new("category")
+    //                 .long("category")
+    //                 .value_name("NAME")
+    //                 .help("Category to send to skopio-cli")
+    //                 .required(false),
+    //         )
+    //         .arg(
+    //             Arg::new("app")
+    //                 .long("app")
+    //                 .value_name("NAME")
+    //                 .help("App name to send to skopio-cli")
+    //                 .required(false),
+    //         )
+    //         .arg(
+    //             Arg::new("entity-type")
+    //                 .long("entity-type")
+    //                 .value_name("NAME")
+    //                 .help("Entity type to send to skopio-cli")
+    //                 .required(false),
+    //         )
+    //         .arg(
+    //             Arg::new("source")
+    //                 .long("source")
+    //                 .value_name("NAME")
+    //                 .help("Source identifier to send to skopio-cli")
+    //                 .required(false),
+    //         )
+    //         .get_matches();
 
-        cfg.skopio_cli = matches
-            .get_one::<String>("skopio-cli")
-            .expect("required")
-            .to_string();
+    //     cfg.skopio_cli = matches
+    //         .get_one::<String>("skopio-cli")
+    //         .expect("required")
+    //         .to_string();
 
-        if let Some(v) = matches.get_one::<String>("idle-secs") {
-            if let Ok(secs) = v.parse::<u64>() {
-                cfg.idle_timeout = Duration::from_secs(secs);
-            }
-        }
+    //     if let Some(v) = matches.get_one::<String>("idle-secs") {
+    //         if let Ok(secs) = v.parse::<u64>() {
+    //             cfg.idle_timeout = Duration::from_secs(secs);
+    //         }
+    //     }
 
-        if let Some(v) = matches.get_one::<String>("switch-grace-secs") {
-            if let Ok(secs) = v.parse::<u64>() {
-                cfg.switch_grace = Duration::from_secs(secs);
-            }
-        }
+    //     if let Some(v) = matches.get_one::<String>("switch-grace-secs") {
+    //         if let Ok(secs) = v.parse::<u64>() {
+    //             cfg.switch_grace = Duration::from_secs(secs);
+    //         }
+    //     }
 
-        if let Some(v) = matches.get_one::<String>("min-session-secs") {
-            if let Ok(secs) = v.parse::<i64>() {
-                cfg.min_session_secs = secs;
-            }
-        }
+    //     if let Some(v) = matches.get_one::<String>("min-session-secs") {
+    //         if let Ok(secs) = v.parse::<i64>() {
+    //             cfg.min_session_secs = secs;
+    //         }
+    //     }
 
-        if let Some(v) = matches.get_one::<String>("category") {
-            cfg.category = v.to_string();
-        }
-        if let Some(v) = matches.get_one::<String>("app") {
-            cfg.app = v.to_string();
-        }
-        if let Some(v) = matches.get_one::<String>("entity-type") {
-            cfg.entity_type = v.to_string();
-        }
-        if let Some(v) = matches.get_one::<String>("source") {
-            cfg.source = v.to_string();
-        }
+    //     if let Some(v) = matches.get_one::<String>("category") {
+    //         cfg.category = v.to_string();
+    //     }
+    //     if let Some(v) = matches.get_one::<String>("app") {
+    //         cfg.app = v.to_string();
+    //     }
+    //     if let Some(v) = matches.get_one::<String>("entity-type") {
+    //         cfg.entity_type = v.to_string();
+    //     }
+    //     if let Some(v) = matches.get_one::<String>("source") {
+    //         cfg.source = v.to_string();
+    //     }
 
-        Ok(cfg)
-    }
+    //     Ok(cfg)
+    // }
 }
 
 fn now_unix_secs() -> i64 {
@@ -184,6 +184,7 @@ fn uri_to_path_string(uri: &Url) -> Option<String> {
 
 #[derive(Debug, Clone)]
 struct Session {
+    #[allow(dead_code)]
     uri: Url,
     entity: String,
     project: String,
@@ -480,29 +481,30 @@ impl Backend {
         }
     }
 
-    async fn periodic_flush_tick(client: Client, cfg: CliConfig, state: Arc<Mutex<State>>) {
+    async fn periodic_flush_tick(self: Arc<Self>) {
         let mut tick = interval(Duration::from_secs(5));
         loop {
             tick.tick().await;
 
             let now = Instant::now();
             let (tick_no, cur_key, total_sessions) = {
-                let mut st = state.lock().await;
+                let mut st = self.state.lock().await;
                 st.tick_count += 1;
                 (st.tick_count, st.current_key.clone(), st.sessions.len())
             };
 
             if tick_no % 6 == 0 {
-                let _ = client
+                let _ = self.client
                     .log_message(
                         MessageType::LOG,
                         format!(
-                            "[tick] running (every 5s). tick={} sessions={} current={:?} idle={}s grace={}s",
+                            "[tick] running (every 5s). tick={} sessions={} current={:?} idle={}s grace={}s sync_every={}s",
                             tick_no,
                             total_sessions,
                             cur_key.as_deref(),
-                            cfg.idle_timeout.as_secs(),
-                            cfg.switch_grace.as_secs(),
+                            self.cfg.idle_timeout.as_secs(),
+                            self.cfg.switch_grace.as_secs(),
+                            self.cfg.sync_interval.as_secs(),
                         ),
                     )
                     .await;
@@ -511,12 +513,12 @@ impl Backend {
             let mut to_flush: Vec<(Session, &'static str)> = Vec::new();
 
             {
-                let mut st = state.lock().await;
+                let mut st = self.state.lock().await;
                 let current_key = st.current_key.clone();
 
                 if let Some(cur_key) = &current_key {
                     if let Some(cur_sess) = st.sessions.get(cur_key) {
-                        if now.duration_since(cur_sess.last_seen) >= cfg.idle_timeout {
+                        if now.duration_since(cur_sess.last_seen) >= self.cfg.idle_timeout {
                             if let Some(s) = st.sessions.remove(cur_key) {
                                 to_flush.push((s, "idle_timeout"));
                             }
@@ -528,7 +530,7 @@ impl Backend {
                 }
 
                 let current_key = st.current_key.clone();
-                let grace = cfg.switch_grace;
+                let grace = self.cfg.switch_grace;
 
                 let keys_to_remove: Vec<String> = st
                     .sessions
@@ -554,7 +556,8 @@ impl Backend {
             }
 
             for (sess, reason) in to_flush {
-                let _ = client
+                let _ = self
+                    .client
                     .log_message(
                         MessageType::INFO,
                         format!(
@@ -564,20 +567,39 @@ impl Backend {
                     )
                     .await;
 
-                match emit_cli_event(&cfg, &sess).await {
-                    Ok((duration, _stdout, _stderr)) => {
-                        if duration < cfg.min_session_secs {
-                            let _ = client
+                match emit_cli_event(&self.cfg, &sess).await {
+                    Ok((duration, stdout, stderr)) => {
+                        if duration < self.cfg.min_session_secs {
+                            let _ = self.client
                                 .log_message(
                                     MessageType::LOG,
                                     format!(
                                         "[tick] skipped (too short): duration={}s < min_session_secs={}",
-                                        duration, cfg.min_session_secs
+                                        duration, self.cfg.min_session_secs
                                     ),
                                 )
                                 .await;
                         } else {
-                            let _ = client
+                            if !stdout.trim().is_empty() {
+                                let _ = self
+                                    .client
+                                    .log_message(
+                                        MessageType::LOG,
+                                        format!("[tick] CLI stdout: {}", stdout.trim()),
+                                    )
+                                    .await;
+                            }
+                            if !stderr.trim().is_empty() {
+                                let _ = self
+                                    .client
+                                    .log_message(
+                                        MessageType::LOG,
+                                        format!("[tick] CLI stderr: {}", stderr.trim()),
+                                    )
+                                    .await;
+                            }
+                            let _ = self
+                                .client
                                 .log_message(
                                     MessageType::INFO,
                                     format!(
@@ -586,10 +608,13 @@ impl Backend {
                                     ),
                                 )
                                 .await;
+
+                            self.sync("post-flush").await;
                         }
                     }
                     Err(err) => {
-                        let _ = client
+                        let _ = self
+                            .client
                             .log_message(
                                 MessageType::ERROR,
                                 format!(
@@ -601,6 +626,8 @@ impl Backend {
                     }
                 }
             }
+
+            self.sync("periodic").await;
         }
     }
 }
@@ -626,12 +653,13 @@ impl LanguageServer for Backend {
         self.log(
             MessageType::INFO,
             format!(
-                "[initialize] root={:?} cfg={{cli: {}, idle:{}s, grace:{}s, min_session:{}s, category:{}, app:{}, entity_type:{}, source:{}}}",
+                "[initialize] root={:?} cfg={{cli: {}, idle:{}s, grace:{}s, min_session:{}s, sync_interval:{}s, category:{}, app:{}, entity_type:{}, source:{}}}",
                 root.as_deref(),
                 self.cfg.skopio_cli,
                 self.cfg.idle_timeout.as_secs(),
                 self.cfg.switch_grace.as_secs(),
                 self.cfg.min_session_secs,
+                self.cfg.sync_interval.as_secs(),
                 self.cfg.category,
                 self.cfg.app,
                 self.cfg.entity_type,
@@ -655,12 +683,9 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.log(MessageType::INFO, "Skopio LSP initialized").await;
-        self.log(
-            MessageType::LOG,
-            "Now open/edit/save/close a file to verify did_* handlers and CLI emission.",
-        )
-        .await;
+        self.log(MessageType::INFO, "Skopio LSP initialized!!!!!!!!!!!")
+            .await;
+        self.sync("initialized").await;
     }
 
     async fn shutdown(&self) -> LspResult<()> {
@@ -688,7 +713,7 @@ impl LanguageServer for Backend {
             .await;
 
             match emit_cli_event(&self.cfg, &sess).await {
-                Ok((duration, _stdout, _stderr)) => {
+                Ok((duration, stdout, stderr)) => {
                     if duration < self.cfg.min_session_secs {
                         self.log(
                             MessageType::LOG,
@@ -699,6 +724,20 @@ impl LanguageServer for Backend {
                         )
                         .await;
                     } else {
+                        if !stdout.trim().is_empty() {
+                            self.log(
+                                MessageType::LOG,
+                                format!("[shutdown] CLI stdout: {}", stdout.trim()),
+                            )
+                            .await;
+                        }
+                        if !stderr.trim().is_empty() {
+                            self.log(
+                                MessageType::LOG,
+                                format!("[shutdown] CLI stderr: {}", stderr.trim()),
+                            )
+                            .await;
+                        }
                         self.log(
                             MessageType::INFO,
                             format!(
@@ -721,6 +760,8 @@ impl LanguageServer for Backend {
                 }
             }
         }
+
+        self.sync("shutdown").await;
 
         Ok(())
     }
@@ -766,13 +807,12 @@ impl LanguageServer for Backend {
         )
         .await;
         self.flush_closed(&params.text_document.uri).await;
-        self.sync("shutdown").await
     }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cfg = CliConfig::from_args()?;
+    let cfg = CliConfig::from_env();
 
     let state = Arc::new(Mutex::new(State {
         workspace_root: None,
@@ -784,17 +824,18 @@ async fn main() -> anyhow::Result<()> {
     }));
 
     let (service, socket) = LspService::new(|client| {
-        tokio::spawn(Backend::periodic_flush_tick(
-            client.clone(),
-            cfg.clone(),
-            state.clone(),
-        ));
-
-        Backend {
+        let backend = Arc::new(Backend {
             client,
             cfg: cfg.clone(),
             state: state.clone(),
-        }
+        });
+
+        let bg = backend.clone();
+        tokio::spawn(async move {
+            bg.periodic_flush_tick().await;
+        });
+
+        backend
     });
 
     Server::new(tokio::io::stdin(), tokio::io::stdout(), socket)
