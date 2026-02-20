@@ -29,42 +29,7 @@ struct CliConfig {
 }
 
 impl CliConfig {
-    /// Defaults from env
-    fn from_env() -> Self {
-        let skopio_cli = std::env::var("SKOPIO_CLI_PATH").unwrap_or_else(|_| "skopio-cli".into());
-        let idle_secs = std::env::var("SKOPIO_ZED_IDLE_SECS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(60);
-        let grace_secs = std::env::var("SKOPIO_ZED_SWITCH_GRACE_SECS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(60);
-        let min_session_secs = std::env::var("SKOPIO_ZED_MIN_SESSION_SECS")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(2);
-        let sync_secs = std::env::var("SKOPIO_ZED_SYNC_SECS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(180);
-
-        Self {
-            skopio_cli,
-            idle_timeout: Duration::from_secs(idle_secs),
-            switch_grace: Duration::from_secs(grace_secs),
-            min_session_secs,
-            category: "Coding".into(),
-            app: "Zed".into(),
-            entity_type: "File".into(),
-            source: "skopio-zed".into(),
-            sync_interval: Duration::from_secs(sync_secs),
-        }
-    }
-
     fn from_args() -> anyhow::Result<Self> {
-        let mut cfg = Self::from_env();
-
         let matches = ClapCommand::new("skopio-ls")
             .version(env!("CARGO_PKG_VERSION"))
             .about("Skopio language server for Zed")
@@ -80,89 +45,119 @@ impl CliConfig {
                     .long("idle-secs")
                     .value_name("SECS")
                     .help("Flush current active session after this many seconds of no activity")
-                    .required(false),
+                    .default_value("60"),
             )
             .arg(
                 Arg::new("switch-grace-secs")
                     .long("switch-grace-secs")
                     .value_name("SECS")
                     .help("Flush non-current sessions after this many seconds since last activity")
-                    .required(false),
+                    .default_value("60"),
             )
             .arg(
                 Arg::new("min-session-secs")
                     .long("min-session-secs")
                     .value_name("SECS")
                     .help("Do not emit sessions shorter than this duration")
-                    .required(false),
+                    .default_value("2"),
+            )
+            .arg(
+                Arg::new("sync-secs")
+                    .long("sync-secs")
+                    .value_name("SECS")
+                    .help("Run `skopio-cli sync` at most once per this many seconds")
+                    .default_value("180"),
             )
             .arg(
                 Arg::new("category")
                     .long("category")
                     .value_name("NAME")
                     .help("Category to send to skopio-cli")
-                    .required(false),
+                    .default_value("Coding"),
             )
             .arg(
                 Arg::new("app")
                     .long("app")
                     .value_name("NAME")
                     .help("App name to send to skopio-cli")
-                    .required(false),
+                    .default_value("Zed"),
             )
             .arg(
                 Arg::new("entity-type")
                     .long("entity-type")
                     .value_name("NAME")
                     .help("Entity type to send to skopio-cli")
-                    .required(false),
+                    .default_value("File"),
             )
             .arg(
                 Arg::new("source")
                     .long("source")
                     .value_name("NAME")
                     .help("Source identifier to send to skopio-cli")
-                    .required(false),
+                    .default_value("skopio-zed"),
             )
             .get_matches();
 
-        cfg.skopio_cli = matches
+        let skopio_cli = matches
             .get_one::<String>("skopio-cli")
             .expect("required")
             .to_string();
 
-        if let Some(v) = matches.get_one::<String>("idle-secs") {
-            if let Ok(secs) = v.parse::<u64>() {
-                cfg.idle_timeout = Duration::from_secs(secs);
-            }
-        }
+        let idle_secs = matches
+            .get_one::<String>("idle-secs")
+            .expect("defaulted")
+            .parse::<u64>()
+            .context("invalid --idle-secs")?;
 
-        if let Some(v) = matches.get_one::<String>("switch-grace-secs") {
-            if let Ok(secs) = v.parse::<u64>() {
-                cfg.switch_grace = Duration::from_secs(secs);
-            }
-        }
+        let grace_secs = matches
+            .get_one::<String>("switch-grace-secs")
+            .expect("defaulted")
+            .parse::<u64>()
+            .context("invalid --switch-grace-secs")?;
 
-        if let Some(v) = matches.get_one::<String>("min-session-secs") {
-            if let Ok(secs) = v.parse::<i64>() {
-                cfg.min_session_secs = secs;
-            }
-        }
+        let min_session_secs = matches
+            .get_one::<String>("min-session-secs")
+            .expect("defaulted")
+            .parse::<i64>()
+            .context("invalid --min-session-secs")?;
 
-        if let Some(v) = matches.get_one::<String>("category") {
-            cfg.category = v.to_string();
-        }
-        if let Some(v) = matches.get_one::<String>("app") {
-            cfg.app = v.to_string();
-        }
-        if let Some(v) = matches.get_one::<String>("entity-type") {
-            cfg.entity_type = v.to_string();
-        }
-        if let Some(v) = matches.get_one::<String>("source") {
-            cfg.source = v.to_string();
-        }
+        let sync_secs = matches
+            .get_one::<String>("sync-secs")
+            .expect("defaulted")
+            .parse::<u64>()
+            .context("invalid --sync-secs")?;
 
-        Ok(cfg)
+        let category = matches
+            .get_one::<String>("category")
+            .expect("defaulted")
+            .to_string();
+
+        let app = matches
+            .get_one::<String>("app")
+            .expect("defaulted")
+            .to_string();
+
+        let entity_type = matches
+            .get_one::<String>("entity-type")
+            .expect("defaulted")
+            .to_string();
+
+        let source = matches
+            .get_one::<String>("source")
+            .expect("defaulted")
+            .to_string();
+
+        Ok(Self {
+            skopio_cli,
+            idle_timeout: Duration::from_secs(idle_secs),
+            switch_grace: Duration::from_secs(grace_secs),
+            min_session_secs,
+            category,
+            app,
+            entity_type,
+            source,
+            sync_interval: Duration::from_secs(sync_secs),
+        })
     }
 }
 
