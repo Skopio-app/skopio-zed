@@ -3,15 +3,16 @@
 ## Overview
 
 `skopio-zed` is a Zed editor extension that:
+
 - Installs and manages the `skopio-ls` language server
-- Installs and manages the `skopio-cli`
+- Installs and manages the [`skopio-cli`](https://github.com/Skopio-app/skopio/tree/main/apps/cli)
 - Launches `skopio-ls` with the correct runtime arguments
 - Passes configuration to the LSP via CLI flags
 - Handles binary downloads, updates, and verification
 
 ## Architecture
 
-```
+```text
 Zed
  ↓
 skopio-zed (extension)
