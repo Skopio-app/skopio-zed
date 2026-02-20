@@ -13,10 +13,6 @@ const EXT_REPO: &str = "Skopio-app/skopio-zed";
 const CLI_LATEST_JSON_URL: &str =
     "https://github.com/Skopio-app/cli-releases/releases/latest/download/latest.json";
 
-const ENV_IDLE_SECS: &str = "SKOPIO_ZED_IDLE_SECS";
-const ENV_SWITCH_GRACE_SECS: &str = "SKOPIO_ZED_SWITCH_GRACE_SECS";
-const ENV_MIN_SESSION_SECS: &str = "SKOPIO_ZED_MIN_SESSION_SECS";
-
 #[derive(Debug, Deserialize)]
 struct LatestJson {
     version: String,
@@ -125,20 +121,12 @@ fn read_lsp_settings(worktree: &zed::Worktree) -> Option<zed::settings::LspSetti
     zed::settings::LspSettings::for_worktree("skopio", worktree).ok()
 }
 
-fn json_u64(v: &Value, key: &str) -> Option<u64> {
-    v.get(key).and_then(|x| x.as_u64())
-}
-
-fn json_i64(v: &Value, key: &str) -> Option<i64> {
-    v.get(key).and_then(|x| x.as_i64())
-}
-
 fn json_str(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
 }
 
 fn fetch_latest_json() -> Result<LatestJson, String> {
-    let latest_path = "cli.latest.json";
+    let latest_path = "latest.json";
     zed::download_file(
         CLI_LATEST_JSON_URL,
         latest_path,
@@ -376,29 +364,6 @@ impl Skopio {
         self.cached_cli_binary_path = Some(p.clone());
         Ok(p)
     }
-
-    fn resolve_runtime_tuning(worktree: &zed::Worktree) -> (String, String, String) {
-        let mut idle = "60".to_string();
-        let mut grace = "60".to_string();
-        let mut min_sess = "2".to_string();
-
-        // Allow overriding via lsp.skopio.settings.*
-        if let Some(ls) = read_lsp_settings(worktree)
-            && let Some(settings) = ls.settings
-        {
-            if let Some(v) = json_u64(&settings, "idle_secs") {
-                idle = v.to_string();
-            }
-            if let Some(v) = json_u64(&settings, "switch_grace_secs") {
-                grace = v.to_string();
-            }
-            if let Some(v) = json_i64(&settings, "min_session_secs") {
-                min_sess = v.to_string();
-            }
-        }
-
-        (idle, grace, min_sess)
-    }
 }
 
 impl zed::Extension for Skopio {
@@ -419,32 +384,15 @@ impl zed::Extension for Skopio {
         let cli_path = self.resolve_cli_path(language_server_id, worktree, arch)?;
         let lsp_path = self.resolve_lsp_path(language_server_id, worktree, arch)?;
 
-        let (idle, grace, min_sess) = Self::resolve_runtime_tuning(worktree);
-
         let cli_abs = sanitize_path(&to_abs_string_for_exec(&cli_path)?);
         let lsp_abs = sanitize_path(&to_abs_string_for_exec(&lsp_path)?);
 
-        let args = vec![
-            "--skopio-cli".to_string(),
-            cli_abs.clone(),
-            "--idle-secs".to_string(),
-            idle.clone(),
-            "--switch-grace-secs".to_string(),
-            grace.clone(),
-            "--min-session-secs".to_string(),
-            min_sess.clone(),
-        ];
-
-        let mut env_vars = worktree.shell_env();
-        env_vars.push(("SKOPIO_CLI_PATH".into(), cli_abs));
-        env_vars.push((ENV_IDLE_SECS.into(), idle));
-        env_vars.push((ENV_SWITCH_GRACE_SECS.into(), grace));
-        env_vars.push((ENV_MIN_SESSION_SECS.into(), min_sess));
+        let args = vec!["--skopio-cli".to_string(), cli_abs.clone()];
 
         Ok(zed::Command {
             command: lsp_abs,
             args,
-            env: env_vars,
+            env: worktree.shell_env(),
         })
     }
 }
