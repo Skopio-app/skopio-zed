@@ -1,5 +1,5 @@
 use anyhow::Context;
-// use clap::{Arg, Command as ClapCommand};
+use clap::{Arg, Command as ClapCommand};
 use std::{
     collections::HashMap,
     sync::Arc,
@@ -62,108 +62,108 @@ impl CliConfig {
         }
     }
 
-    // fn from_args() -> anyhow::Result<Self> {
-    //     let mut cfg = Self::from_env();
+    fn from_args() -> anyhow::Result<Self> {
+        let mut cfg = Self::from_env();
 
-    //     let matches = ClapCommand::new("skopio-ls")
-    //         .version(env!("CARGO_PKG_VERSION"))
-    //         .about("Skopio language server for Zed")
-    //         .arg(
-    //             Arg::new("skopio-cli")
-    //                 .long("skopio-cli")
-    //                 .value_name("PATH")
-    //                 .help("Path to skopio-cli binary")
-    //                 .required(true),
-    //         )
-    //         .arg(
-    //             Arg::new("idle-secs")
-    //                 .long("idle-secs")
-    //                 .value_name("SECS")
-    //                 .help("Flush current active session after this many seconds of no activity")
-    //                 .required(false),
-    //         )
-    //         .arg(
-    //             Arg::new("switch-grace-secs")
-    //                 .long("switch-grace-secs")
-    //                 .value_name("SECS")
-    //                 .help("Flush non-current sessions after this many seconds since last activity")
-    //                 .required(false),
-    //         )
-    //         .arg(
-    //             Arg::new("min-session-secs")
-    //                 .long("min-session-secs")
-    //                 .value_name("SECS")
-    //                 .help("Do not emit sessions shorter than this duration")
-    //                 .required(false),
-    //         )
-    //         .arg(
-    //             Arg::new("category")
-    //                 .long("category")
-    //                 .value_name("NAME")
-    //                 .help("Category to send to skopio-cli")
-    //                 .required(false),
-    //         )
-    //         .arg(
-    //             Arg::new("app")
-    //                 .long("app")
-    //                 .value_name("NAME")
-    //                 .help("App name to send to skopio-cli")
-    //                 .required(false),
-    //         )
-    //         .arg(
-    //             Arg::new("entity-type")
-    //                 .long("entity-type")
-    //                 .value_name("NAME")
-    //                 .help("Entity type to send to skopio-cli")
-    //                 .required(false),
-    //         )
-    //         .arg(
-    //             Arg::new("source")
-    //                 .long("source")
-    //                 .value_name("NAME")
-    //                 .help("Source identifier to send to skopio-cli")
-    //                 .required(false),
-    //         )
-    //         .get_matches();
+        let matches = ClapCommand::new("skopio-ls")
+            .version(env!("CARGO_PKG_VERSION"))
+            .about("Skopio language server for Zed")
+            .arg(
+                Arg::new("skopio-cli")
+                    .long("skopio-cli")
+                    .value_name("PATH")
+                    .help("Path to skopio-cli binary")
+                    .required(true),
+            )
+            .arg(
+                Arg::new("idle-secs")
+                    .long("idle-secs")
+                    .value_name("SECS")
+                    .help("Flush current active session after this many seconds of no activity")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("switch-grace-secs")
+                    .long("switch-grace-secs")
+                    .value_name("SECS")
+                    .help("Flush non-current sessions after this many seconds since last activity")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("min-session-secs")
+                    .long("min-session-secs")
+                    .value_name("SECS")
+                    .help("Do not emit sessions shorter than this duration")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("category")
+                    .long("category")
+                    .value_name("NAME")
+                    .help("Category to send to skopio-cli")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("app")
+                    .long("app")
+                    .value_name("NAME")
+                    .help("App name to send to skopio-cli")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("entity-type")
+                    .long("entity-type")
+                    .value_name("NAME")
+                    .help("Entity type to send to skopio-cli")
+                    .required(false),
+            )
+            .arg(
+                Arg::new("source")
+                    .long("source")
+                    .value_name("NAME")
+                    .help("Source identifier to send to skopio-cli")
+                    .required(false),
+            )
+            .get_matches();
 
-    //     cfg.skopio_cli = matches
-    //         .get_one::<String>("skopio-cli")
-    //         .expect("required")
-    //         .to_string();
+        cfg.skopio_cli = matches
+            .get_one::<String>("skopio-cli")
+            .expect("required")
+            .to_string();
 
-    //     if let Some(v) = matches.get_one::<String>("idle-secs") {
-    //         if let Ok(secs) = v.parse::<u64>() {
-    //             cfg.idle_timeout = Duration::from_secs(secs);
-    //         }
-    //     }
+        if let Some(v) = matches.get_one::<String>("idle-secs") {
+            if let Ok(secs) = v.parse::<u64>() {
+                cfg.idle_timeout = Duration::from_secs(secs);
+            }
+        }
 
-    //     if let Some(v) = matches.get_one::<String>("switch-grace-secs") {
-    //         if let Ok(secs) = v.parse::<u64>() {
-    //             cfg.switch_grace = Duration::from_secs(secs);
-    //         }
-    //     }
+        if let Some(v) = matches.get_one::<String>("switch-grace-secs") {
+            if let Ok(secs) = v.parse::<u64>() {
+                cfg.switch_grace = Duration::from_secs(secs);
+            }
+        }
 
-    //     if let Some(v) = matches.get_one::<String>("min-session-secs") {
-    //         if let Ok(secs) = v.parse::<i64>() {
-    //             cfg.min_session_secs = secs;
-    //         }
-    //     }
+        if let Some(v) = matches.get_one::<String>("min-session-secs") {
+            if let Ok(secs) = v.parse::<i64>() {
+                cfg.min_session_secs = secs;
+            }
+        }
 
-    //     if let Some(v) = matches.get_one::<String>("category") {
-    //         cfg.category = v.to_string();
-    //     }
-    //     if let Some(v) = matches.get_one::<String>("app") {
-    //         cfg.app = v.to_string();
-    //     }
-    //     if let Some(v) = matches.get_one::<String>("entity-type") {
-    //         cfg.entity_type = v.to_string();
-    //     }
-    //     if let Some(v) = matches.get_one::<String>("source") {
-    //         cfg.source = v.to_string();
-    //     }
+        if let Some(v) = matches.get_one::<String>("category") {
+            cfg.category = v.to_string();
+        }
+        if let Some(v) = matches.get_one::<String>("app") {
+            cfg.app = v.to_string();
+        }
+        if let Some(v) = matches.get_one::<String>("entity-type") {
+            cfg.entity_type = v.to_string();
+        }
+        if let Some(v) = matches.get_one::<String>("source") {
+            cfg.source = v.to_string();
+        }
 
-    //     Ok(cfg)
-    // }
+        Ok(cfg)
+    }
 }
 
 fn now_unix_secs() -> i64 {
@@ -683,8 +683,7 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.log(MessageType::INFO, "Skopio LSP initialized!!!!!!!!!!!")
-            .await;
+        self.log(MessageType::INFO, "Skopio LSP initialized").await;
         self.sync("initialized").await;
     }
 
@@ -812,7 +811,7 @@ impl LanguageServer for Backend {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cfg = CliConfig::from_env();
+    let cfg = CliConfig::from_args()?;
 
     let state = Arc::new(Mutex::new(State {
         workspace_root: None,
