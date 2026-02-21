@@ -278,13 +278,13 @@ async fn emit_cli_event(cfg: &CliConfig, sess: &Session) -> anyhow::Result<(i64,
     Ok((duration, stdout, stderr))
 }
 
-struct Backend {
+struct SkopioLanguageServer {
     client: Client,
     cfg: CliConfig,
     state: Arc<Mutex<State>>,
 }
 
-impl Backend {
+impl SkopioLanguageServer {
     async fn log(&self, ty: MessageType, msg: impl Into<String>) {
         let _ = self.client.log_message(ty, msg.into()).await;
     }
@@ -395,7 +395,7 @@ impl Backend {
         .await;
     }
 
-    async fn flush_closed(&self, uri: &Url) {
+    async fn flush(&self, uri: &Url) {
         let key = uri.to_string();
 
         let maybe = {
@@ -628,7 +628,7 @@ impl Backend {
 }
 
 #[tower_lsp::async_trait]
-impl LanguageServer for Backend {
+impl LanguageServer for SkopioLanguageServer {
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
         let root = params
             .root_uri
@@ -665,13 +665,20 @@ impl LanguageServer for Backend {
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::INCREMENTAL,
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::INCREMENTAL),
+                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                            include_text: Some(false),
+                        })),
+                        ..Default::default()
+                    },
                 )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
-                name: "skopio-lsp".into(),
+                name: env!("CARGO_PKG_NAME").to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
             }),
         })
@@ -800,7 +807,7 @@ impl LanguageServer for Backend {
             format!("[did_close] uri={}", params.text_document.uri),
         )
         .await;
-        self.flush_closed(&params.text_document.uri).await;
+        self.flush(&params.text_document.uri).await;
     }
 }
 
@@ -818,7 +825,7 @@ async fn main() -> anyhow::Result<()> {
     }));
 
     let (service, socket) = LspService::new(|client| {
-        let backend = Arc::new(Backend {
+        let backend = Arc::new(SkopioLanguageServer {
             client,
             cfg: cfg.clone(),
             state: state.clone(),
