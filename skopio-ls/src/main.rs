@@ -285,8 +285,8 @@ struct SkopioLanguageServer {
 }
 
 impl SkopioLanguageServer {
-    async fn log(&self, ty: MessageType, msg: impl Into<String>) {
-        let _ = self.client.log_message(ty, msg.into()).await;
+    async fn log(&self, typ: MessageType, msg: impl Into<String>) {
+        let _ = self.client.log_message(typ, msg.into()).await;
     }
 
     async fn sync(&self, reason: &'static str) {

@@ -2,6 +2,7 @@
 name = "skopio-ls"
 version.workspace = true
 edition = "2024"
+repository = "https://github.com/Skopio-app/skopio-zed"
 
 [dependencies]
 anyhow = "1.0.100"

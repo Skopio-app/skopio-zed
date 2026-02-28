@@ -46,4 +46,3 @@ In Zed settings:
   }
 }
 ```
-
