@@ -54,8 +54,8 @@ fn current_mac_arch() -> Option<MacArch> {
 
 fn lsp_asset_name(arch: MacArch) -> &'static str {
     match arch {
-        MacArch::Aarch64 => "skopio-lsp-aarch64-apple-darwin",
-        MacArch::X8664 => "skopio-lsp-x86_64-apple-darwin",
+        MacArch::Aarch64 => "skopio-ls-aarch64-apple-darwin",
+        MacArch::X8664 => "skopio-ls-x86_64-apple-darwin",
     }
 }
 
