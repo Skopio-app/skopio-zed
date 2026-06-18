@@ -5,8 +5,8 @@ edition = "2024"
 repository = "https://github.com/Skopio-app/skopio-zed"
 
 [dependencies]
-anyhow = "1.0.100"
-tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-std"] }
+anyhow = "1.0.102"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-std"] }
 tower-lsp = "0.20.0"
 url = "2.5.8"
-clap = "4.5.59"
+clap = "4.6.1"
