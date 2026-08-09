@@ -54,9 +54,13 @@ fn current_mac_arch() -> Option<MacArch> {
 
 fn lsp_asset_name(arch: MacArch) -> &'static str {
     match arch {
-        MacArch::Aarch64 => "skopio-ls-aarch64-apple-darwin",
-        MacArch::X8664 => "skopio-ls-x86_64-apple-darwin",
+        MacArch::Aarch64 => "skopio-ls-aarch64-apple-darwin.zip",
+        MacArch::X8664 => "skopio-ls-x86_64-apple-darwin.zip",
     }
+}
+
+fn lsp_bin_name() -> &'static str {
+    "skopio-ls"
 }
 
 fn cli_bin_name(arch: MacArch) -> &'static str {
@@ -90,6 +94,45 @@ fn sha256_hex(path: &Path) -> Result<String, String> {
         hasher.update(&buf[..n]);
     }
     Ok(to_lower_hex(&hasher.finalize()))
+}
+
+fn extract_zip_file(
+    archive_path: &Path,
+    archived_name: &str,
+    output_path: &Path,
+) -> Result<(), String> {
+    let archive_file = fs::File::open(archive_path).map_err(|e| format!("open zip failed: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(archive_file).map_err(|e| format!("read zip failed: {e}"))?;
+    let mut archived_file = archive
+        .by_name(archived_name)
+        .map_err(|e| format!("zip is missing `{archived_name}`: {e}"))?;
+
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+    }
+
+    let temporary_path = output_path.with_extension("download");
+    let result = (|| {
+        let mut output_file =
+            fs::File::create(&temporary_path).map_err(|e| format!("create binary failed: {e}"))?;
+        std::io::copy(&mut archived_file, &mut output_file)
+            .map_err(|e| format!("extract binary failed: {e}"))?;
+        output_file
+            .flush()
+            .map_err(|e| format!("flush binary failed: {e}"))
+    })();
+
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+
+    fs::rename(&temporary_path, output_path).map_err(|e| {
+        let _ = fs::remove_file(&temporary_path);
+        format!("install binary failed: {e}")
+    })?;
+    Ok(())
 }
 
 fn write_text(path: &Path, text: &str) -> Result<(), String> {
@@ -154,31 +197,24 @@ fn ensure_cli_installed(arch: MacArch) -> Result<PathBuf, String> {
     let cli_name = cli_bin_name(arch);
     let version_dir = format!("skopio-cli-{}", latest.version);
     let cli_rel_path = Path::new(&version_dir).join(cli_name);
-
-    let needs_install = !fs::metadata(&cli_rel_path).is_ok_and(|m| m.is_file());
-    if needs_install {
-        zed::download_file(&asset.url, &version_dir, zed::DownloadedFileType::Zip)
-            .map_err(|e| format!("download cli zip failed: {e}"))?;
-    }
-
     let zip_file = format!("{version_dir}.zip");
-    if !Path::new(&zip_file).exists() {
+    let zip_path = Path::new(&zip_file);
+
+    if !fs::metadata(&cli_rel_path).is_ok_and(|m| m.is_file()) {
         zed::download_file(&asset.url, &zip_file, zed::DownloadedFileType::Uncompressed)
             .map_err(|e| format!("download cli zip (file) failed: {e}"))?;
-    }
 
-    let got = sha256_hex(Path::new(&zip_file))?;
-    let expected = asset.sha256.trim().to_lowercase();
-    if got != expected {
-        let _ = fs::remove_file(&zip_file);
-        return Err(format!(
-            "sha256 mismatch for {cli_name}.zip: expected {expected}, got {got}"
-        ));
-    }
+        let got = sha256_hex(zip_path)?;
+        let expected = asset.sha256.trim().to_lowercase();
+        if got != expected {
+            let _ = fs::remove_file(zip_path);
+            return Err(format!(
+                "sha256 mismatch for {cli_name}.zip: expected {expected}, got {got}"
+            ));
+        }
 
-    if needs_install {
-        zed::download_file(&asset.url, &version_dir, zed::DownloadedFileType::Zip)
-            .map_err(|e| format!("download cli zip (extract) failed: {e}"))?;
+        extract_zip_file(zip_path, cli_name, &cli_rel_path)?;
+        fs::remove_file(zip_path).map_err(|e| format!("remove cli zip failed: {e}"))?;
     }
 
     zed::make_file_executable(cli_rel_path.to_str().unwrap())
@@ -209,15 +245,19 @@ fn ensure_lsp_installed(arch: MacArch) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("Missing release asset `{asset_name}` in {EXT_REPO}"))?;
 
     let version_dir = format!("skopio-lsp-{}", release.version);
-    let lsp_rel_path = Path::new(&version_dir).join(asset_name);
+    let lsp_rel_path = Path::new(&version_dir).join(lsp_bin_name());
 
     if !fs::metadata(&lsp_rel_path).is_ok_and(|m| m.is_file()) {
+        let archive_path = format!("{version_dir}.zip");
         zed::download_file(
             &asset.download_url,
-            &version_dir,
+            &archive_path,
             zed::DownloadedFileType::Uncompressed,
         )
         .map_err(|e| format!("download lsp failed: {e}"))?;
+
+        extract_zip_file(Path::new(&archive_path), lsp_bin_name(), &lsp_rel_path)?;
+        fs::remove_file(&archive_path).map_err(|e| format!("remove lsp zip failed: {e}"))?;
     }
 
     zed::make_file_executable(lsp_rel_path.to_str().unwrap())
@@ -265,6 +305,21 @@ fn to_abs_string_for_exec(p: &PathBuf) -> Result<String, String> {
     }
     let cwd = env::current_dir().map_err(|e| e.to_string())?;
     Ok(cwd.join(p).to_string_lossy().to_string())
+}
+
+fn push_setting_arg(args: &mut Vec<String>, settings: &Value, key: &str, flag: &str) {
+    let Some(value) = settings.get(key) else {
+        return;
+    };
+
+    let value = match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        _ => return,
+    };
+
+    args.push(flag.to_string());
+    args.push(value);
 }
 
 struct Skopio {
@@ -387,7 +442,21 @@ impl zed::Extension for Skopio {
         let cli_abs = sanitize_path(&to_abs_string_for_exec(&cli_path)?);
         let lsp_abs = sanitize_path(&to_abs_string_for_exec(&lsp_path)?);
 
-        let args = vec!["--skopio-cli".to_string(), cli_abs.clone()];
+        let mut args = vec!["--skopio-cli".to_string(), cli_abs.clone()];
+        if let Some(settings) = read_lsp_settings(worktree).and_then(|settings| settings.settings) {
+            for (key, flag) in [
+                ("idle_secs", "--idle-secs"),
+                ("switch_grace_secs", "--switch-grace-secs"),
+                ("min_session_secs", "--min-session-secs"),
+                ("sync_secs", "--sync-secs"),
+                ("category", "--category"),
+                ("app", "--app"),
+                ("entity_type", "--entity-type"),
+                ("source", "--source"),
+            ] {
+                push_setting_arg(&mut args, &settings, key, flag);
+            }
+        }
 
         Ok(zed::Command {
             command: lsp_abs,
@@ -398,3 +467,50 @@ impl zed::Extension for Skopio {
 }
 
 zed::register_extension!(Skopio);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn extracts_a_named_file_from_a_zip_archive() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_dir = std::env::temp_dir().join(format!("skopio-zed-{nonce}"));
+        fs::create_dir_all(&test_dir).unwrap();
+        let archive_path = test_dir.join("release.zip");
+        let output_path = test_dir.join("bin/skopio-ls");
+
+        let archive_file = fs::File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(archive_file);
+        archive
+            .start_file("skopio-ls", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(b"test binary").unwrap();
+        archive.finish().unwrap();
+
+        extract_zip_file(&archive_path, "skopio-ls", &output_path).unwrap();
+
+        assert_eq!(fs::read(output_path).unwrap(), b"test binary");
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn converts_supported_settings_to_cli_arguments() {
+        let settings = serde_json::json!({
+            "idle_secs": 30,
+            "category": "Development",
+            "ignored": true
+        });
+        let mut args = Vec::new();
+
+        push_setting_arg(&mut args, &settings, "idle_secs", "--idle-secs");
+        push_setting_arg(&mut args, &settings, "category", "--category");
+        push_setting_arg(&mut args, &settings, "ignored", "--ignored");
+
+        assert_eq!(args, ["--idle-secs", "30", "--category", "Development"]);
+    }
+}
