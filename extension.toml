@@ -1,6 +1,6 @@
 id = "skopio"
 name = "Skopio"
-description = "Skopio support."
+description = "Tracks coding activity and syncs file, project, timestamp, and duration metadata to the local Skopio app."
 version = "0.1.0"
 schema_version = 1
 authors = ["Samuel Wahome <hey@samwahome.com>"]
