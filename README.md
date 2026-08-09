@@ -65,10 +65,6 @@ in Zed's settings:
         "switch_grace_secs": 60,
         "min_session_secs": 2,
         "sync_secs": 180,
-        "category": "Coding",
-        "app": "Zed",
-        "entity_type": "File",
-        "source": "skopio-zed"
       }
     }
   }
