@@ -15,16 +15,17 @@ use tower_lsp::{
 };
 use url::Url;
 
+const CATEGORY: &str = "Coding";
+const APP: &str = "Zed";
+const ENTITY_TYPE: &str = "File";
+const SOURCE: &str = "skopio-zed";
+
 #[derive(Debug, Clone)]
 struct CliConfig {
     skopio_cli: String,
     idle_timeout: Duration,
     switch_grace: Duration,
     min_session_secs: i64,
-    category: String,
-    app: String,
-    entity_type: String,
-    source: String,
     sync_interval: Duration,
 }
 
@@ -68,34 +69,6 @@ impl CliConfig {
                     .help("Run `skopio-cli sync` at most once per this many seconds")
                     .default_value("180"),
             )
-            .arg(
-                Arg::new("category")
-                    .long("category")
-                    .value_name("NAME")
-                    .help("Category to send to skopio-cli")
-                    .default_value("Coding"),
-            )
-            .arg(
-                Arg::new("app")
-                    .long("app")
-                    .value_name("NAME")
-                    .help("App name to send to skopio-cli")
-                    .default_value("Zed"),
-            )
-            .arg(
-                Arg::new("entity-type")
-                    .long("entity-type")
-                    .value_name("NAME")
-                    .help("Entity type to send to skopio-cli")
-                    .default_value("File"),
-            )
-            .arg(
-                Arg::new("source")
-                    .long("source")
-                    .value_name("NAME")
-                    .help("Source identifier to send to skopio-cli")
-                    .default_value("skopio-zed"),
-            )
             .get_matches();
 
         let skopio_cli = matches
@@ -127,35 +100,11 @@ impl CliConfig {
             .parse::<u64>()
             .context("invalid --sync-secs")?;
 
-        let category = matches
-            .get_one::<String>("category")
-            .expect("defaulted")
-            .to_string();
-
-        let app = matches
-            .get_one::<String>("app")
-            .expect("defaulted")
-            .to_string();
-
-        let entity_type = matches
-            .get_one::<String>("entity-type")
-            .expect("defaulted")
-            .to_string();
-
-        let source = matches
-            .get_one::<String>("source")
-            .expect("defaulted")
-            .to_string();
-
         Ok(Self {
             skopio_cli,
             idle_timeout: Duration::from_secs(idle_secs),
             switch_grace: Duration::from_secs(grace_secs),
             min_session_secs,
-            category,
-            app,
-            entity_type,
-            source,
             sync_interval: Duration::from_secs(sync_secs),
         })
     }
@@ -243,19 +192,19 @@ async fn emit_cli_event(cfg: &CliConfig, sess: &Session) -> anyhow::Result<(i64,
         .arg("--timestamp")
         .arg(sess.start_ts.to_string())
         .arg("--category")
-        .arg(&cfg.category)
+        .arg(CATEGORY)
         .arg("--app")
-        .arg(&cfg.app)
+        .arg(APP)
         .arg("--entity")
         .arg(&sess.entity)
         .arg("--entity-type")
-        .arg(&cfg.entity_type)
+        .arg(ENTITY_TYPE)
         .arg("--duration")
         .arg(duration.to_string())
         .arg("--project")
         .arg(&sess.project)
         .arg("--source")
-        .arg(&cfg.source)
+        .arg(SOURCE)
         .arg("--end-timestamp")
         .arg(end_ts.to_string());
 
@@ -648,17 +597,13 @@ impl LanguageServer for SkopioLanguageServer {
         self.log(
             MessageType::INFO,
             format!(
-                "[initialize] root={:?} cfg={{cli: {}, idle:{}s, grace:{}s, min_session:{}s, sync_interval:{}s, category:{}, app:{}, entity_type:{}, source:{}}}",
+                "[initialize] root={:?} cfg={{cli: {}, idle:{}s, grace:{}s, min_session:{}s, sync_interval:{}s, category:{CATEGORY}, app:{APP}, entity_type:{ENTITY_TYPE}, source:{SOURCE}}}",
                 root.as_deref(),
                 self.cfg.skopio_cli,
                 self.cfg.idle_timeout.as_secs(),
                 self.cfg.switch_grace.as_secs(),
                 self.cfg.min_session_secs,
                 self.cfg.sync_interval.as_secs(),
-                self.cfg.category,
-                self.cfg.app,
-                self.cfg.entity_type,
-                self.cfg.source
             ),
         )
         .await;

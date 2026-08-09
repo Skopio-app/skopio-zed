@@ -449,10 +449,6 @@ impl zed::Extension for Skopio {
                 ("switch_grace_secs", "--switch-grace-secs"),
                 ("min_session_secs", "--min-session-secs"),
                 ("sync_secs", "--sync-secs"),
-                ("category", "--category"),
-                ("app", "--app"),
-                ("entity_type", "--entity-type"),
-                ("source", "--source"),
             ] {
                 push_setting_arg(&mut args, &settings, key, flag);
             }
