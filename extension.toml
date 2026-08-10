@@ -1,7 +1,7 @@
-id = "skopio"
-name = "Skopio"
+id = "skopio-activity-tracker"
+name = "Skopio Activity Tracker"
 description = "Tracks coding activity and syncs file, project, timestamp, and duration metadata to the local Skopio app."
-version = "0.1.1"
+version = "0.1.2"
 schema_version = 1
 authors = ["Samuel Wahome <hey@samwahome.com>"]
 repository = "https://github.com/Skopio-app/skopio-zed"
