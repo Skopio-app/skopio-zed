@@ -4,36 +4,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use zed_extension_api as zed;
 
 const EXT_REPO: &str = "Skopio-app/skopio-zed";
-const CLI_LATEST_JSON_URL: &str =
-    "https://github.com/Skopio-app/cli-releases/releases/latest/download/latest.json";
-
-#[derive(Debug, Deserialize)]
-struct LatestJson {
-    version: String,
-    assets: Assets,
-}
-
-#[derive(Debug, Deserialize)]
-struct Assets {
-    #[serde(rename = "darwin-aarch64")]
-    darwin_aarch64: Option<Asset>,
-    #[serde(rename = "darwin-x86_64")]
-    darwin_x86_64: Option<Asset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Asset {
-    url: String,
-    sha256: String,
-    #[allow(dead_code)]
-    size: Option<u64>,
-}
+const CLI_REPO: &str = "Skopio-app/cli-releases";
 
 #[derive(Debug, Clone, Copy)]
 enum MacArch {
@@ -63,6 +39,13 @@ fn lsp_bin_name() -> &'static str {
     "skopio-ls"
 }
 
+fn cli_archive_name(arch: MacArch) -> &'static str {
+    match arch {
+        MacArch::Aarch64 => "skopio-cli-darwin-aarch64.zip",
+        MacArch::X8664 => "skopio-cli-darwin-x86_64.zip",
+    }
+}
+
 fn cli_bin_name(arch: MacArch) -> &'static str {
     match arch {
         MacArch::Aarch64 => "skopio-cli-darwin-aarch64",
@@ -78,6 +61,36 @@ fn to_lower_hex(bytes: &[u8]) -> String {
         s.push(LUT[(b & 0x0f) as usize] as char);
     }
     s
+}
+
+fn asset_checksum(contents: &str, asset_name: &str) -> Result<String, String> {
+    for line in contents.lines() {
+        let mut parts = line.split_whitespace();
+
+        let Some(checksum) = parts.next() else {
+            continue;
+        };
+
+        let Some(filename) = parts.next() else {
+            continue;
+        };
+
+        let filename = filename.trim_start_matches('*');
+
+        if filename == asset_name {
+            let checksum = checksum.to_lowercase();
+
+            if checksum.len() != 64 || !checksum.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(format!("Invalid SHA-256 checksum for `{asset_name}`"));
+            }
+
+            return Ok(checksum);
+        }
+    }
+
+    Err(format!(
+        "`checksums_sha256.txt` has no checksum for `{asset_name}`"
+    ))
 }
 
 fn sha256_hex(path: &Path) -> Result<String, String> {
@@ -168,60 +181,93 @@ fn json_str(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
 }
 
-fn fetch_latest_json() -> Result<LatestJson, String> {
-    let latest_path = "cli.latest.json";
-    zed::download_file(
-        CLI_LATEST_JSON_URL,
-        latest_path,
-        zed::DownloadedFileType::Uncompressed,
-    )
-    .map_err(|e| format!("download latest.json failed: {e}"))?;
-
-    let s = fs::read_to_string(latest_path).map_err(|e| format!("read latest.json failed: {e}"))?;
-    serde_json::from_str(&s).map_err(|e| format!("parse latest.json failed: {e}"))
-}
-
 fn ensure_cli_installed(arch: MacArch) -> Result<PathBuf, String> {
-    let latest = fetch_latest_json()?;
-    let asset = match arch {
-        MacArch::Aarch64 => latest
-            .assets
-            .darwin_aarch64
-            .ok_or_else(|| "latest.json missing assets.darwin-aarch64".to_string())?,
-        MacArch::X8664 => latest
-            .assets
-            .darwin_x86_64
-            .ok_or_else(|| "latest.json missing assets.darwin-x86_64".to_string())?,
-    };
+    let release = zed::latest_github_release(
+        CLI_REPO,
+        zed::GithubReleaseOptions {
+            require_assets: true,
+            pre_release: false,
+        },
+    )
+    .map_err(|e| format!("latest_github_release failed for {CLI_REPO}: {e}"))?;
+
+    let archive_name = cli_archive_name(arch);
+    let archive_asset = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == archive_name)
+        .ok_or_else(|| {
+            format!(
+                "release {} in {CLI_REPO} is missing `{archive_name}`",
+                release.version
+            )
+        })?;
+
+    let checksum_asset_name = "checksums_sha256.txt";
+    let checksum_asset = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == checksum_asset_name)
+        .ok_or_else(|| {
+            format!(
+                "release {} in {CLI_REPO} is missing `{checksum_asset_name}`",
+                release.version
+            )
+        })?;
 
     let cli_name = cli_bin_name(arch);
-    let version_dir = format!("skopio-cli-{}", latest.version);
+    let version_dir = format!("skopio-cli-{}", release.version);
     let cli_rel_path = Path::new(&version_dir).join(cli_name);
-    let zip_file = format!("{version_dir}.zip");
-    let zip_path = Path::new(&zip_file);
 
     if !fs::metadata(&cli_rel_path).is_ok_and(|m| m.is_file()) {
-        zed::download_file(&asset.url, &zip_file, zed::DownloadedFileType::Uncompressed)
-            .map_err(|e| format!("download cli zip (file) failed: {e}"))?;
+        let archive_path = format!("{version_dir}.zip");
+        let checksum_path = format!("{version_dir}.checksums_sha256.txt");
 
-        let got = sha256_hex(zip_path)?;
-        let expected = asset.sha256.trim().to_lowercase();
-        if got != expected {
-            let _ = fs::remove_file(zip_path);
+        zed::download_file(
+            &archive_asset.download_url,
+            &archive_path,
+            zed::DownloadedFileType::Uncompressed,
+        )
+        .map_err(|e| format!("download `{archive_name}` failed: {e}"))?;
+
+        zed::download_file(
+            &checksum_asset.download_url,
+            &checksum_path,
+            zed::DownloadedFileType::Uncompressed,
+        )
+        .map_err(|e| format!("download `{checksum_asset_name}` failed {e}"))?;
+
+        let checksum_contents = fs::read_to_string(&checksum_path)
+            .map_err(|e| format!("read `{checksum_asset_name}` failed: {e}"))?;
+
+        let expected = asset_checksum(&checksum_contents, archive_name)?;
+        let actual = sha256_hex(Path::new(&archive_path))?;
+
+        if actual != expected {
+            let _ = fs::remove_file(&archive_path);
+            let _ = fs::remove_file(&checksum_path);
+
             return Err(format!(
-                "sha256 mismatch for {cli_name}.zip: expected {expected}, got {got}"
+                "SHA-256 mismatch for `{archive_name}`: expected {expected}, got {actual}"
             ));
         }
 
-        extract_zip_file(zip_path, cli_name, &cli_rel_path)?;
-        fs::remove_file(zip_path).map_err(|e| format!("remove cli zip failed: {e}"))?;
+        extract_zip_file(Path::new(&archive_path), cli_name, &cli_rel_path)?;
+
+        fs::remove_file(&archive_path).map_err(|e| format!("remove cli archive failed: {e}"))?;
+
+        fs::remove_file(&checksum_path).map_err(|e| format!("remove checksum file failed: {e}"))?;
     }
 
-    zed::make_file_executable(cli_rel_path.to_str().unwrap())
-        .map_err(|e| format!("chmod +x failed: {e}"))?;
+    zed::make_file_executable(
+        cli_rel_path
+            .to_str()
+            .ok_or_else(|| "CLI path is not valid UTF-8".to_string())?,
+    )
+    .map_err(|e| format!("chmod +x failed: {e}"))?;
 
     let version_marker = Path::new(&version_dir).join(format!("{cli_name}.version"));
-    write_text(&version_marker, &(latest.version.clone() + "\n"))?;
+    write_text(&version_marker, &(release.version.clone() + "\n"))?;
 
     cleanup_old_dirs("skopio-cli-", &version_dir);
     Ok(cli_rel_path)
